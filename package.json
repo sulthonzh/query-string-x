@@ -1,0 +1,51 @@
+{
+  "name": "query-string-x",
+  "version": "1.0.0",
+  "description": "Zero-dep URL query string parser and manipulator with type inference",
+  "type": "module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "bin": {
+    "query-string": "cli.ts"
+  },
+  "files": [
+    "index.ts",
+    "cli.ts",
+    "test/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "query-string",
+    "url",
+    "parser",
+    "stringify",
+    "qs",
+    "query",
+    "url-parser",
+    "zero-dependencies",
+    "typescript"
+  ],
+  "author": "Sulthonzh",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/index.test.ts",
+    "cli": "node cli.ts",
+    "demo": "node cli.ts parse \"foo=bar&baz=qux\"",
+    "info": "node cli.ts info"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sulthonzh/query-string-x.git"
+  },
+  "homepage": "https://github.com/sulthonzh/query-string-x#readme",
+  "bugs": {
+    "url": "https://github.com/sulthonzh/query-string-x/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}
