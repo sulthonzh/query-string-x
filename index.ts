@@ -111,12 +111,19 @@ export function parse(query: string, options: ParserOptions = {}): QueryObject {
   const pairs = queryString.split('&')
   
   for (const pair of pairs) {
-    const [key, ...values] = pair.split('=')
+    const eqIndex = pair.indexOf('=')
+    const rawKey = eqIndex >= 0 ? pair.slice(0, eqIndex) : pair
+    const rawValue = eqIndex >= 0 ? pair.slice(eqIndex + 1) : ''
     
-    if (!key) continue
+    const decodedKey = decodeInternal(rawKey)
+    const value = decodeInternal(rawValue)
     
-    const decodedKey = decodeInternal(key)
-    const value = values.length > 0 ? decodeInternal(values.join('=')) : ''
+    // Handle comma array format
+    if (arrayFormat === 'comma' && value.includes(arraySeparator)) {
+      const items = value.split(arraySeparator).map(v => parseValue(v, { strictNumbers, strictBooleans, dateFormats }))
+      result[decodedKey] = items
+      continue
+    }
     
     // Handle nested object notation with dots
     if (decodedKey.includes('.')) {
@@ -131,14 +138,22 @@ export function parse(query: string, options: ParserOptions = {}): QueryObject {
         current = current[part]
       }
       
-      current[parts[parts.length - 1]] = parseValue(value, {
-        strictNumbers,
-        strictBooleans,
-        dateFormats
-      })
+      const lastPart = parts[parts.length - 1]
+      const parsed = parseValue(value, { strictNumbers, strictBooleans, dateFormats })
+      
+      // Handle bracket array notation on last part of nested path
+      if (lastPart.endsWith('[]')) {
+        const cleanKey = lastPart.slice(0, -2)
+        if (!current[cleanKey]) {
+          current[cleanKey] = []
+        }
+        current[cleanKey].push(parsed)
+      } else {
+        current[lastPart] = parsed
+      }
     } else {
       // Handle array formats
-      if (decodedKey.endsWith('[]') && arrayFormat !== 'repeat') {
+      if (decodedKey.endsWith('[]')) {
         const cleanKey = decodedKey.slice(0, -2)
         if (!result[cleanKey]) {
           result[cleanKey] = []
@@ -176,37 +191,44 @@ function parseValue(value: string, options: {
 }): QueryValue {
   const { strictNumbers, strictBooleans, dateFormats } = options
   
-  // Empty string handling
+  // Empty string stays empty string
   if (value === '') {
-    return null
+    return ''
   }
   
-  // Number parsing
-  if (!strictNumbers || /^-?\d+(\.\d+)?$/.test(value)) {
-    const num = Number(value)
-    if (!isNaN(num) && String(num) === value) {
-      return num
-    }
-  }
-  
-  // Boolean parsing
-  if (!strictBooleans || /^(true|false|1|0|yes|no|on|off)$/i.test(value)) {
-    const lower = value.toLowerCase()
-    if (lower === 'true' || lower === '1' || lower === 'yes' || lower === 'on') {
-      return true
-    }
-    if (lower === 'false' || lower === '0' || lower === 'no' || lower === 'off') {
-      return false
-    }
-  }
-  
-  // Date parsing
+  // Date parsing (check before numbers — timestamps look like numbers)
   for (const format of dateFormats) {
     if (format === 'iso' && /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)$/.test(value)) {
       return new Date(value)
     }
-    if (format === 'timestamp' && /^-?\d+$/.test(value)) {
-      return new Date(Number(value) * 1000)
+    if (format === 'timestamp' && /^-?\d{10,13}$/.test(value)) {
+      const ts = Number(value)
+      // Sanity check: valid timestamp range (year 2000-2100 in seconds or millis)
+      if (ts > 946684800 && ts < 4102444800) {
+        return new Date(ts * 1000)
+      }
+      if (ts > 946684800000 && ts < 4102444800000) {
+        return new Date(ts)
+      }
+    }
+  }
+  
+  // Boolean parsing (true/false, yes/no, on/off — but NOT 1/0 which are numbers)
+  if (!strictBooleans) {
+    const lower = value.toLowerCase()
+    if (lower === 'true' || lower === 'yes' || lower === 'on') {
+      return true
+    }
+    if (lower === 'false' || lower === 'no' || lower === 'off') {
+      return false
+    }
+  }
+  
+  // Number parsing
+  if (!strictNumbers) {
+    const num = Number(value)
+    if (!isNaN(num) && String(num) === value) {
+      return num
     }
   }
   
@@ -251,9 +273,16 @@ export function stringify(obj: QueryObject | null | undefined, options: Stringif
   for (const key of keys) {
     const value = obj[key]
     
-    if (value === null || value === undefined) {
-      if (strictNull && !omitNulls) {
-        result.push(encodeInternal(key) + '=')
+    if (value === null) {
+      if (!omitNulls) {
+        result.push(`${encodeInternal(key)}=null`)
+      }
+      continue
+    }
+    
+    if (value === undefined) {
+      if (!omitNulls) {
+        result.push(`${encodeInternal(key)}=`)
       }
       continue
     }
@@ -289,6 +318,14 @@ export function stringify(obj: QueryObject | null | undefined, options: Stringif
           result.push(`${encodeInternal(key)}=${encodeInternal(items.join(arraySeparator))}`)
         }
       }
+    } else if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+      // Stringify nested object with dot notation
+      const nestedObj: QueryObject = {}
+      for (const [nestedKey, nestedValue] of Object.entries(value)) {
+        nestedObj[`${key}.${nestedKey}`] = nestedValue as QueryValue
+      }
+      const nestedStr = stringify(nestedObj, { ...options, sort, url: false, omitNulls })
+      if (nestedStr) result.push(nestedStr)
     } else {
       // Handle single values
       const str = serialize(value)
@@ -320,10 +357,10 @@ export function parseUrl(url: string, options: ParserOptions = {}): {
     search: ''
   }
   
-  // Extract hash
+  // Extract hash (unless noHash or noSearch — they strip downstream portions)
   if (url.includes('#')) {
     const [main, hash] = url.split('#')
-    result.hash = hash
+    result.hash = (noHash || noSearch) ? '' : (hash || '')
     url = main
   }
   
@@ -331,8 +368,13 @@ export function parseUrl(url: string, options: ParserOptions = {}): {
   if (url.includes('?')) {
     const [path, search] = url.split('?')
     result.pathname = path
-    result.search = '?' + search
-    result.query = parse(search, options)
+    if (noSearch) {
+      result.search = ''
+      result.query = {}
+    } else {
+      result.search = '?' + search
+      result.query = parse(search, options)
+    }
   } else {
     result.pathname = url
     result.search = ''
@@ -355,7 +397,7 @@ export function buildUrl(
   
   const queryString = stringify(query, options)
   if (queryString) {
-    url += queryString
+    url += '?' + queryString
   }
   
   if (hash) {
@@ -474,6 +516,7 @@ function defaultEncode(str: string): string {
   return encodeURIComponent(str)
     .replace(/%20/g, '+')
     .replace(/%2C/g, ',')
+    .replace(/%3A/g, ':')
 }
 
 /**

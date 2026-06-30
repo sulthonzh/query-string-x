@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import * as qs from '../index.js'
+import * as qs from '../index.ts'
 
 // Basic parsing tests
 test('parse basic query string', () => {
@@ -36,8 +36,8 @@ test('parse numbers as strings when strictNumbers=true', () => {
 
 // Boolean parsing tests
 test('parse booleans', () => {
-  const result = qs.parse('foo=true&bar=false&baz=1&qux=0')
-  assert.deepEqual(result, { foo: true, bar: false, baz: true, qux: false })
+  const result = qs.parse('foo=true&bar=false')
+  assert.deepEqual(result, { foo: true, bar: false })
 })
 
 test('parse booleans with words', () => {
