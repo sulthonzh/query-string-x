@@ -72,16 +72,19 @@ export function parse(query: string, options: ParserOptions = {}): QueryObject {
     encode = true,
     decode = true,
     strictNull = false,
-    plusSpace = false,
+    plusSpace = true,
     rfc3986 = false,
     strictNumbers = false,
     strictBooleans = false,
     dateFormats = ['iso', 'timestamp'],
-    decodeFn = decode ? defaultDecode : (str) => str,
-    encodeFn = encode ? defaultEncode : (str) => str,
+    decodeFn: userDecodeFn,
+    encodeFn: userEncodeFn,
     noHash = false,
     noSearch = false
   } = options
+
+  const decodeFn = userDecodeFn ?? (decode ? (str: string) => defaultDecode(str, plusSpace) : (str: string) => str)
+  const encodeFn = userEncodeFn ?? (encode ? (str: string) => defaultEncode(str, plusSpace, rfc3986) : (str: string) => str)
 
   const result: QueryObject = {}
   
@@ -92,6 +95,11 @@ export function parse(query: string, options: ParserOptions = {}): QueryObject {
   }
   if (noHash && queryString.includes('#')) {
     queryString = queryString.split('#')[0] || ''
+  }
+  
+  // Strip leading ? if present (common when passing URL search strings)
+  if (queryString.startsWith('?')) {
+    queryString = queryString.slice(1)
   }
   
   if (!queryString) {
@@ -245,14 +253,16 @@ export function stringify(obj: QueryObject | null | undefined, options: Stringif
     arraySeparator = ',',
     encode = true,
     strictNull = false,
-    plusSpace = false,
+    plusSpace = true,
     rfc3986 = false,
     sort = false,
     url = false,
     omitNulls = false,
     serialize = defaultSerialize,
-    encodeFn = encode ? defaultEncode : (str) => str
+    encodeFn: userEncodeFn
   } = options
+
+  const encodeFn = userEncodeFn ?? (encode ? (str: string) => defaultEncode(str, plusSpace, rfc3986) : (str: string) => str)
 
   if (!obj) {
     return url ? '?' : ''
@@ -275,7 +285,7 @@ export function stringify(obj: QueryObject | null | undefined, options: Stringif
     
     if (value === null) {
       if (!omitNulls) {
-        result.push(`${encodeInternal(key)}=null`)
+        result.push(strictNull ? `${encodeInternal(key)}=` : `${encodeInternal(key)}=null`)
       }
       continue
     }
@@ -360,7 +370,7 @@ export function parseUrl(url: string, options: ParserOptions = {}): {
   // Extract hash (unless noHash or noSearch — they strip downstream portions)
   if (url.includes('#')) {
     const [main, hash] = url.split('#')
-    result.hash = (noHash || noSearch) ? '' : (hash || '')
+    result.hash = noHash ? '' : (hash || '')
     url = main
   }
   
@@ -512,9 +522,15 @@ export function set(obj: QueryObject, path: string, value: QueryValue): QueryObj
 /**
  * Default URL encoding
  */
-function defaultEncode(str: string): string {
-  return encodeURIComponent(str)
-    .replace(/%20/g, '+')
+function defaultEncode(str: string, plusSpace = true, rfc3986 = false): string {
+  let result = encodeURIComponent(str)
+  if (plusSpace) {
+    result = result.replace(/%20/g, '+')
+  }
+  if (rfc3986) {
+    result = result.replace(/[!*'()/]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+  }
+  return result
     .replace(/%2C/g, ',')
     .replace(/%3A/g, ':')
 }
@@ -522,8 +538,11 @@ function defaultEncode(str: string): string {
 /**
  * Default URL decoding
  */
-function defaultDecode(str: string): string {
-  return decodeURIComponent(str.replace(/\+/g, ' '))
+function defaultDecode(str: string, plusSpace = true): string {
+  if (plusSpace) {
+    str = str.replace(/\+/g, ' ')
+  }
+  return decodeURIComponent(str)
 }
 
 /**

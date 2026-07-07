@@ -161,7 +161,14 @@ test('stringify nulls', () => {
 })
 
 test('stringify with strictNull option', () => {
+  // strictNull: true renders null as empty string (not literal 'null')
   const result = qs.stringify({ foo: null, bar: 'value' }, { strictNull: true })
+  assert.equal(result, 'foo=&bar=value')
+})
+
+test('stringify without strictNull renders literal null', () => {
+  // strictNull: false (default) renders null as literal 'null'
+  const result = qs.stringify({ foo: null, bar: 'value' })
   assert.equal(result, 'foo=null&bar=value')
 })
 
@@ -344,11 +351,12 @@ test('parseUrl with noHash option', () => {
 })
 
 test('parseUrl with noSearch option', () => {
+  // noSearch strips query/search but preserves hash
   const result = qs.parseUrl('/path?foo=bar#section', { noSearch: true })
   assert.deepEqual(result, {
     pathname: '/path',
     query: {},
-    hash: '',
+    hash: 'section',
     search: ''
   })
 })
@@ -391,4 +399,173 @@ test('null and undefined handling', () => {
     empty: ''
   })
   assert.equal(result, 'present=value&nullValue=null&undefinedValue=&empty=')
+})
+// === Edge-case tests for bug fixes (2026-07-08 audit) ===
+
+test('parse strips leading question mark', () => {
+  assert.deepEqual(qs.parse('?foo=bar&baz=1'), { foo: 'bar', baz: 1 })
+  assert.deepEqual(qs.parse('?'), {})
+  assert.deepEqual(qs.parse(''), {})
+})
+
+test('parse with plusSpace=false preserves + literally', () => {
+  const result = qs.parse('foo=a+b', { plusSpace: false })
+  assert.equal(result.foo, 'a+b')
+})
+
+test('parse with plusSpace=true converts + to space', () => {
+  const result = qs.parse('foo=a+b', { plusSpace: true })
+  assert.equal(result.foo, 'a b')
+})
+
+test('stringify with plusSpace=false uses %20', () => {
+  const result = qs.stringify({ foo: 'a b' }, { plusSpace: false })
+  assert.equal(result, 'foo=a%20b')
+})
+
+test('stringify with plusSpace=true uses +', () => {
+  const result = qs.stringify({ foo: 'a b' }, { plusSpace: true })
+  assert.equal(result, 'foo=a+b')
+})
+
+test('stringify with rfc3986 encodes reserved chars', () => {
+  const result = qs.stringify({ q: "it's" }, { rfc3986: true })
+  assert.equal(result, 'q=it%27s')
+})
+
+test('stringify without rfc3986 does not encode single quote', () => {
+  const result = qs.stringify({ q: "it's" })
+  assert.equal(result, "q=it's")
+})
+
+test('parseUrl with noHash strips hash but preserves search', () => {
+  const result = qs.parseUrl('/path?foo=bar#section', { noHash: true })
+  assert.deepEqual(result, {
+    pathname: '/path',
+    query: { foo: 'bar' },
+    hash: '',
+    search: '?foo=bar'
+  })
+})
+
+test('parseUrl with both noHash and noSearch strips both', () => {
+  const result = qs.parseUrl('/path?foo=bar#section', { noHash: true, noSearch: true })
+  assert.deepEqual(result, {
+    pathname: '/path',
+    query: {},
+    hash: '',
+    search: ''
+  })
+})
+
+test('stringify null with strictNull=false renders literal null', () => {
+  assert.equal(qs.stringify({ a: null }), 'a=null')
+})
+
+test('stringify undefined with strictNull=true renders empty', () => {
+  assert.equal(qs.stringify({ a: undefined }, { strictNull: true }), 'a=')
+})
+
+test('stringify nested object with null values', () => {
+  const result = qs.stringify({ outer: { inner: null, keep: 'yes' } })
+  assert.equal(result, 'outer.inner=null&outer.keep=yes')
+})
+
+test('merge with replace strategy', () => {
+  const result = qs.merge(
+    { tags: ['a', 'b'] },
+    { tags: ['c'] },
+    { arrayMerge: 'replace' }
+  )
+  assert.deepEqual(result, { tags: ['c'] })
+})
+
+test('merge with concat strategy', () => {
+  const result = qs.merge(
+    { tags: ['a', 'b'] },
+    { tags: ['c'] },
+    { arrayMerge: 'concat' }
+  )
+  assert.deepEqual(result, { tags: ['a', 'b', 'c'] })
+})
+
+test('get with defaultValue', () => {
+  const obj = { a: { b: { c: 1 } } }
+  assert.equal(qs.get(obj, 'a.b.c'), 1)
+  assert.equal(qs.get(obj, 'a.b.missing', 'fallback'), 'fallback')
+  assert.equal(qs.get(obj, 'x.y.z'), undefined)
+})
+
+test('set overwrites existing nested value', () => {
+  const obj = { a: { b: 1 } }
+  qs.set(obj, 'a.b', 2)
+  assert.equal((obj as any).a.b, 2)
+})
+
+test('parse handles URL with hash only', () => {
+  const result = qs.parseUrl('/path#section')
+  assert.equal(result.pathname, '/path')
+  assert.equal(result.hash, 'section')
+  assert.equal(result.search, '')
+})
+
+test('parse handles URL with empty search', () => {
+  const result = qs.parseUrl('/path?')
+  assert.equal(result.pathname, '/path')
+  assert.equal(result.search, '?')
+  assert.deepEqual(result.query, {})
+})
+
+test('buildUrl with no query returns pathname only', () => {
+  assert.equal(qs.buildUrl('/path'), '/path')
+  assert.equal(qs.buildUrl('/path', null), '/path')
+  assert.equal(qs.buildUrl('/path', undefined), '/path')
+})
+
+test('buildUrl with hash', () => {
+  assert.equal(qs.buildUrl('/path', { foo: 'bar' }, 'section'), '/path?foo=bar#section')
+  assert.equal(qs.buildUrl('/path', undefined, 'section'), '/path#section')
+})
+
+test('pick returns empty for missing keys', () => {
+  assert.deepEqual(qs.pick({ a: 1 }, ['b']), {})
+})
+
+test('omit removes specified keys', () => {
+  assert.deepEqual(qs.omit({ a: 1, b: 2, c: 3 }, ['b']), { a: 1, c: 3 })
+})
+
+test('parse with custom decodeFn', () => {
+  const result = qs.parse('foo=bar', { decodeFn: (s) => s.toUpperCase() })
+  assert.equal(result.FOO, 'BAR')
+})
+
+test('stringify with custom encodeFn', () => {
+  const result = qs.stringify({ foo: 'bar' }, { encodeFn: (s) => s })
+  assert.equal(result, 'foo=bar')
+})
+
+test('parse handles encoded brackets in key names', () => {
+  const result = qs.parse('a%5B%5D=1&a%5B%5D=2')
+  assert.deepEqual(result, { a: [1, 2] })
+})
+
+test('parse with repeat array format', () => {
+  const result = qs.parse('a=1&a=2', { arrayFormat: 'repeat' })
+  assert.deepEqual(result, { a: [1, 2] })
+})
+
+test('stringify with repeat array format', () => {
+  const result = qs.stringify({ a: [1, 2] }, { arrayFormat: 'repeat' })
+  assert.equal(result, 'a=1&a=2')
+})
+
+test('stringify with sort option', () => {
+  const result = qs.stringify({ zebra: 1, alpha: 2, mango: 3 }, { sort: true })
+  assert.equal(result, 'alpha=2&mango=3&zebra=1')
+})
+
+test('stringify with url option adds question mark', () => {
+  const result = qs.stringify({ foo: 'bar' }, { url: true })
+  assert.equal(result, '?foo=bar')
 })
